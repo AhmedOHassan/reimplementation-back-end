@@ -2,6 +2,7 @@ class Team < ApplicationRecord
   validates :name, uniqueness: { scope: :parent_id, message: "is already in use." }
 
   has_many :teams_users, dependent: :destroy
+  has_many :teams_participants, dependent: :destroy
   has_many :users, through: :teams_users
   has_many :join_team_requests, dependent: :destroy
   has_one :team_node, foreign_key: :node_object_id, dependent: :destroy
@@ -9,8 +10,11 @@ class Team < ApplicationRecord
   has_many :bids, dependent: :destroy
   has_many :participants
   belongs_to :assignment, optional: true
+  belongs_to :course,     optional: true
 
   has_paper_trail
+
+  validate :assignment_or_course_presence
 
   scope :find_team_for_assignment_and_user, lambda { |assignment_id, user_id|
     joins(:teams_users).where('teams.parent_id = ? AND teams_users.user_id = ?', assignment_id, user_id)
@@ -78,7 +82,6 @@ class Team < ApplicationRecord
   # Add member to the team
   def add_member(user)
     raise "The user #{user.name} is already a member of the team #{name}" if has_as_member?(user)
-
     can_add_member = false
     unless full?
       can_add_member = true
@@ -293,5 +296,34 @@ class Team < ApplicationRecord
   # Whether a team includes a given participant or not
   def has_participant?(participant)
     participants.include?(participant)
+  end
+
+  private
+
+  def assignment_or_course_presence
+    has_assignment = assignment_id.present? || parent_id.present?
+    has_course     = course_id.present?
+
+    unless has_assignment || has_course
+      errors.add(:base, "Team must belong to either an assignment or a course")
+    end
+
+    if has_assignment && has_course
+      errors.add(:base, "Team cannot be both AssignmentTeam and a CourseTeam")
+    end
+  end
+
+  def can_participant_join_team?(participant)
+    return false if full?
+
+    if assignment_id.present?
+      # assignment‐level team: ensure same assignment & not already signed up
+      participant.assignment_id == assignment_id &&
+        !TeamsParticipant.exists?(participant_id: participant.id)
+    else
+      # course‐level team: ensure same course & not already signed up
+      participant.course_id == course_id &&
+        !TeamsParticipant.exists?(participant_id: participant.id)
+    end
   end
 end
